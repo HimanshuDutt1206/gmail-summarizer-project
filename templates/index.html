@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gmail Intelligent Processor</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1><i class="fas fa-envelope-open-text"></i> Gmail Intelligent Processor</h1>
+            <p>Process and summarize your unread emails with AI</p>
+        </header>
+
+        <div class="main-content">
+            <div class="control-panel">
+                <button id="summarizeBtn" class="btn btn-primary">
+                    <i class="fas fa-brain"></i> Summarize Current Unread Emails
+                </button>
+                <div class="status" id="status"></div>
+                
+                <div class="filters-section" id="filtersSection" style="display: none;">
+                    <h3>Filter Emails</h3>
+                    <div class="filter-controls">
+                        <div class="filter-group">
+                            <label for="importanceFilter">Filter by Importance:</label>
+                            <select id="importanceFilter" class="filter-select">
+                                <option value="ALL">All Emails</option>
+                                <option value="VERY_IMPORTANT">Very Important</option>
+                                <option value="IMPORTANT">Important</option>
+                                <option value="UNIMPORTANT">Unimportant</option>
+                                <option value="SPAM">Spam</option>
+                            </select>
+                        </div>
+                        
+                        <div class="filter-group">
+                            <label for="deadlineFilter">Filter by Deadlines:</label>
+                            <select id="deadlineFilter" class="filter-select">
+                                <option value="ALL">All Emails</option>
+                                <option value="WITH_DEADLINES">Only emails with deadlines</option>
+                                <option value="NO_DEADLINES">Only emails without deadlines</option>
+                            </select>
+                        </div>
+                        
+                        <button id="clearFiltersBtn" class="btn btn-secondary">
+                            <i class="fas fa-times"></i> Clear Filters
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="emails-section" id="emailsSection" style="display: none;">
+                <h2>Email Summaries</h2>
+                <div class="email-count" id="emailCount"></div>
+                <div class="emails-list" id="emailsList"></div>
+            </div>
+
+            <div class="email-detail" id="emailDetail" style="display: none;">
+                <div class="email-detail-header">
+                    <button id="backBtn" class="btn btn-secondary">
+                        <i class="fas fa-arrow-left"></i> Back to List
+                    </button>
+                </div>
+                <div class="email-detail-content" id="emailDetailContent"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="loading" id="loading" style="display: none;">
+        <div class="spinner"></div>
+        <p>Processing your emails...</p>
+    </div>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html> 
