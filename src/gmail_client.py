@@ -6,6 +6,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from email.mime.text import MIMEText
 import base64
+import html
 from config.config import SCOPES, CREDENTIALS_FILE, TOKEN_FILE
 
 
@@ -55,31 +56,140 @@ class GmailClient:
             print(f'An error occurred: {e}')
             return None
 
-    def get_message_content(self, message):
-        """Extract the content from a message."""
-        if 'payload' not in message:
-            return None
+    def _extract_text_from_part(self, part):
+        """Extract text content from a message part."""
+        try:
+            mime_type = part.get('mimeType', '')
+            body = part.get('body', {})
+            data = body.get('data', '')
 
-        payload = message['payload']
-        headers = payload.get('headers', [])
-        subject = next((header['value'] for header in headers
-                       if header['name'].lower() == 'subject'), 'No Subject')
+            if not data:
+                return ''
 
+            # Decode base64 content
+            try:
+                decoded_data = base64.urlsafe_b64decode(data)
+                text = decoded_data.decode('utf-8')
+            except UnicodeDecodeError:
+                # Try different encodings
+                for encoding in ['latin-1', 'cp1252', 'iso-8859-1']:
+                    try:
+                        text = decoded_data.decode(encoding)
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                else:
+                    # If all encodings fail, use error handling
+                    text = decoded_data.decode('utf-8', errors='replace')
+
+            # Clean HTML content if it's HTML
+            if 'html' in mime_type.lower():
+                # Simple HTML tag removal
+                import re
+                text = re.sub(r'<[^>]+>', '', text)
+                text = html.unescape(text)
+
+            return text.strip()
+
+        except Exception as e:
+            print(f"Error extracting text from part: {e}")
+            return ''
+
+    def _extract_content_recursive(self, payload):
+        """Recursively extract content from email payload."""
+        content_parts = []
+
+        # Check if this part has direct content
+        if 'body' in payload and payload['body'].get('data'):
+            text = self._extract_text_from_part(payload)
+            if text:
+                content_parts.append(text)
+
+        # Check for multipart content
         if 'parts' in payload:
-            parts = payload['parts']
-            data = parts[0]['body'].get('data', '')
-        else:
-            data = payload['body'].get('data', '')
+            for part in payload['parts']:
+                mime_type = part.get('mimeType', '')
 
-        if data:
-            text = base64.urlsafe_b64decode(data).decode()
+                # Skip attachments and images
+                if mime_type.startswith('image/') or 'attachment' in str(part.get('filename', '')):
+                    continue
+
+                # Recursively process parts
+                if 'parts' in part:
+                    sub_content = self._extract_content_recursive(part)
+                    content_parts.extend(sub_content)
+                else:
+                    # Extract text from this part
+                    text = self._extract_text_from_part(part)
+                    if text:
+                        content_parts.append(text)
+
+        return content_parts
+
+    def get_message_content(self, message):
+        """Extract the content from a message with improved handling."""
+        try:
+            if 'payload' not in message:
+                return None
+
+            payload = message['payload']
+            headers = payload.get('headers', [])
+
+            # Extract subject and other important headers
+            subject = 'No Subject'
+            date_header = ''
+            sender = ''
+
+            for header in headers:
+                header_name = header['name'].lower()
+                if header_name == 'subject':
+                    subject = header['value']
+                elif header_name == 'date':
+                    date_header = header['value']
+                elif header_name == 'from':
+                    sender = header['value']
+
+            # Extract content using recursive method
+            content_parts = self._extract_content_recursive(payload)
+
+            # Combine all content parts
+            if content_parts:
+                content = '\n\n'.join(content_parts)
+            else:
+                # Fallback to snippet if no content extracted
+                content = message.get('snippet', '')
+
+            # Clean up content
+            content = content.strip()
+            if not content:
+                content = message.get('snippet', 'No content available')
+
             return {
                 'subject': subject,
-                'content': text,
+                'content': content,
                 'snippet': message.get('snippet', ''),
-                'id': message['id']
+                'id': message['id'],
+                'date_header': date_header,
+                'sender': sender,
+                'received_time': message.get('internalDate', '')
             }
-        return None
+
+        except Exception as e:
+            print(f"Error extracting message content: {e}")
+            # Fallback: return basic info with snippet
+            try:
+                headers = message.get('payload', {}).get('headers', [])
+                subject = next(
+                    (h['value'] for h in headers if h['name'].lower() == 'subject'), 'No Subject')
+
+                return {
+                    'subject': subject,
+                    'content': message.get('snippet', 'Content extraction failed'),
+                    'snippet': message.get('snippet', ''),
+                    'id': message['id']
+                }
+            except:
+                return None
 
     def mark_as_read(self, msg_id):
         """Mark a message as read by removing the UNREAD label."""

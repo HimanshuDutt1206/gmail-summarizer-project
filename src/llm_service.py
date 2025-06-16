@@ -69,35 +69,64 @@ class LLMService:
 
         return None
 
-    def analyze_email_comprehensive(self, subject, content):
+    def analyze_email_comprehensive(self, subject, content, email_metadata=None):
         """Comprehensive email analysis using Gemini for importance, categories, summary, and deadlines."""
         print(f"[DEBUG] Analyzing email comprehensively: {subject[:30]}...")
 
         # Clean content for better processing
         clean_content = self._clean_email_content(content)
 
+        # Include metadata if available
+        metadata_info = ""
+        if email_metadata:
+            if email_metadata.get('date_header'):
+                metadata_info += f"\nEmail Date Header: {email_metadata['date_header']}"
+            if email_metadata.get('sender'):
+                metadata_info += f"\nSender: {email_metadata['sender']}"
+
         prompt = f"""
-Analyze this email and provide a comprehensive analysis. Respond in JSON format exactly as shown:
+You are analyzing an email to help someone quickly understand what it's about while scanning their unread emails. The entire email content is provided below.
 
 Email Subject: {subject}
-Email Content: {clean_content}
+Email Content: {clean_content}{metadata_info}
 
-Provide analysis in this exact JSON format:
+Create a clear, detailed summary that includes ALL important information while removing useless details. Respond in this exact JSON format:
+
 {{
     "importance_level": "VERY_IMPORTANT|IMPORTANT|UNIMPORTANT|SPAM",
-    "summary": "2-3 sentence summary of the email's main points and purpose",
-    "deadlines": ["list of specific deadlines or dates found", "e.g. June 18, 2025", "tomorrow by 5pm"],
+    "summary": "Clear, detailed summary that includes all critical information: dates, times, meeting IDs, reference numbers, phone numbers, deadlines. Remove all fluff, disclaimers, legal text, and technical details. Focus only on what the user needs to know and do.",
+    "deadlines": ["list of specific deadlines or dates found - include exact dates and times"],
     "has_deadline": true/false,
-    "reasoning": "Brief explanation of why this importance level was assigned"
+    "reasoning": "Brief explanation of importance level",
+    "important_links": ["ONLY include URLs that are directly actionable for the user - primary meeting join links, booking management links, direct download links. Skip: legal policies, contact pages, company logos, promotional links, help pages"],
+    "attachments_mentioned": ["ONLY include documents/files that the user needs to know about - actual attachments, referenced documents, materials to review. Skip: company logos, email signatures, promotional images"]
 }}
 
+Summary Guidelines:
+- Include ALL critical details but remove useless information
+- For meetings: Include date/time (or state if missing), meeting ID, passcode, dial-in number
+- For bookings: Include confirmation number, dates, key details
+- For deadlines: Include exact date/time and what needs to be done
+- For documents: Mention what documents are included/referenced
+- Skip: Legal disclaimers, privacy policies, unsubscribe links, company signatures, promotional text
+- Skip: Technical details like "this email is in HTML format"
+- Skip: Generic phrases like "please find attached" or "hope this email finds you well"
+- Focus on: What is this about? What do I need to do? When? How?
+
+Link Selection Guidelines:
+- Only include links that are directly actionable or useful to the user
+- For meetings: include the main join link, skip legal/policy links
+- For bookings: include confirmation/management links, skip promotional links
+- For resources: include direct download/access links, skip company homepages
+- Skip: contact pages, legal policies, company logos, tracking URLs, promotional content
+
 Importance Guidelines:
-- VERY_IMPORTANT: Urgent deadlines, critical business matters, emergency situations
-- IMPORTANT: Work tasks, meetings, deadlines, bills, official communications
+- VERY_IMPORTANT: Urgent deadlines, critical business matters, emergencies
+- IMPORTANT: Work tasks, meetings, deadlines, bills, official communications, bookings
 - UNIMPORTANT: Newsletters, notifications, non-urgent personal emails
 - SPAM: Promotional emails, advertisements, suspicious content
 
-Focus on extracting actual dates, deadlines, and time-sensitive information. Be specific about deadlines.
+Extract all dates, deadlines, and time-sensitive information. Include important URLs and document references.
 """
 
         result = self._call_gemini(prompt)
@@ -180,15 +209,13 @@ Focus on extracting actual dates, deadlines, and time-sensitive information. Be 
                 return 'UNIMPORTANT'
 
     def _clean_email_content(self, content):
-        """Clean email content for better processing."""
-        # Remove common email artifacts
-        content = re.sub(r'On .* wrote:', '', content)
-        content = re.sub(r'From:.*?Subject:', '', content, flags=re.DOTALL)
-        content = re.sub(r'http[s]?://\S+', '[URL]', content)
+        """Minimal cleaning - send entire email content to LLM."""
+        # Only basic whitespace cleanup - let LLM handle everything else
         content = re.sub(r'\s+', ' ', content)
         content = content.strip()
 
-        return content[:2000]  # Limit length for API
+        # Send entire content - no truncation, let LLM decide what's important
+        return content
 
     def _extract_deadlines_regex(self, subject, content):
         """Extract deadlines using regex as fallback."""

@@ -172,6 +172,31 @@ class EmailProcessor {
               }).join(', ')
             : 'No deadlines found';
 
+        // Format summary
+        const summary = email.summary || 'No summary available';
+
+        // Format important links
+        const importantLinks = email.important_links && email.important_links.length > 0
+            ? email.important_links.map(link => 
+                `<div class="link-item">
+                    <i class="fas fa-external-link-alt"></i>
+                    <a href="${this.escapeHtml(link)}" target="_blank" rel="noopener noreferrer">
+                        ${this.escapeHtml(link)}
+                    </a>
+                </div>`
+              ).join('')
+            : '<div class="text-muted">No important links found</div>';
+
+        // Format attachments mentioned
+        const attachmentsMentioned = email.attachments_mentioned && email.attachments_mentioned.length > 0
+            ? email.attachments_mentioned.map(attachment => 
+                `<div class="attachment-item">
+                    <i class="fas fa-paperclip"></i>
+                    ${this.escapeHtml(attachment)}
+                </div>`
+              ).join('')
+            : '<div class="text-muted">No documents mentioned</div>';
+
         this.emailDetailContent.innerHTML = `
             <div class="detail-section">
                 <div class="detail-label">
@@ -184,10 +209,12 @@ class EmailProcessor {
 
             <div class="detail-section">
                 <div class="detail-label">
-                    <i class="fas fa-file-alt"></i> AI Summary
+                    <i class="fas fa-file-alt"></i> Summary
                 </div>
                 <div class="detail-value">
-                    ${this.escapeHtml(email.summary)}
+                    <div class="summary-text">
+                        ${this.escapeHtml(summary)}
+                    </div>
                 </div>
             </div>
 
@@ -202,6 +229,7 @@ class EmailProcessor {
                 </div>
             </div>
 
+            ${email.deadlines && email.deadlines.length > 0 ? `
             <div class="detail-section">
                 <div class="detail-label">
                     <i class="fas fa-calendar-alt"></i> Deadlines
@@ -212,14 +240,39 @@ class EmailProcessor {
                     </div>
                 </div>
             </div>
+            ` : ''}
+
+            ${email.important_links && email.important_links.length > 0 ? `
+            <div class="detail-section">
+                <div class="detail-label">
+                    <i class="fas fa-link"></i> Important Links
+                </div>
+                <div class="detail-value">
+                    <div class="links-list">
+                        ${importantLinks}
+                    </div>
+                </div>
+            </div>
+            ` : ''}
+
+            ${email.attachments_mentioned && email.attachments_mentioned.length > 0 ? `
+            <div class="detail-section">
+                <div class="detail-label">
+                    <i class="fas fa-paperclip"></i> Documents Mentioned
+                </div>
+                <div class="detail-value">
+                    <div class="attachments-list">
+                        ${attachmentsMentioned}
+                    </div>
+                </div>
+            </div>
+            ` : ''}
 
             <div class="detail-section">
                 <div class="detail-label">
                     <i class="fas fa-info-circle"></i> Processing Info
                 </div>
                 <div class="detail-value">
-                    <strong>Important:</strong> ${email.is_important ? 'Yes' : 'No'}<br>
-                    <strong>Has Deadline:</strong> ${email.has_deadline ? 'Yes' : 'No'}<br>
                     <strong>Processed:</strong> ${email.processed_at}
                 </div>
             </div>

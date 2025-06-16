@@ -79,10 +79,18 @@ def process_email_with_llm(email_data, llm_service):
     subject = email_data.get('subject', '')
     content = email_data.get('content', '')
 
+    # Prepare metadata for LLM
+    email_metadata = {
+        'date_header': email_data.get('date_header', ''),
+        'sender': email_data.get('sender', ''),
+        'received_time': email_data.get('received_time', '')
+    }
+
     print(f"[DEBUG] Processing email with LLM: {subject[:50]}...")
 
-    # Get comprehensive LLM analysis
-    analysis = llm_service.analyze_email_comprehensive(subject, content)
+    # Get comprehensive LLM analysis with metadata
+    analysis = llm_service.analyze_email_comprehensive(
+        subject, content, email_metadata)
 
     if analysis:
         # Use LLM analysis results
@@ -90,10 +98,14 @@ def process_email_with_llm(email_data, llm_service):
         summary = analysis.get('summary', 'No summary available')
         deadlines = analysis.get('deadlines', [])
         has_deadline = analysis.get('has_deadline', False)
+        important_links = analysis.get('important_links', [])
+        attachments_mentioned = analysis.get('attachments_mentioned', [])
 
         print(f"[DEBUG] LLM Analysis - Importance: {importance_level}")
         print(f"[DEBUG] Summary: {summary[:100]}...")
         print(f"[DEBUG] Deadlines: {deadlines}")
+        print(f"[DEBUG] Important Links: {important_links}")
+        print(f"[DEBUG] Attachments: {attachments_mentioned}")
     else:
         # Fallback to individual methods
         categories = llm_service.categorize_email(subject, content)
@@ -113,6 +125,8 @@ def process_email_with_llm(email_data, llm_service):
         'categories': [importance_level],  # For backward compatibility
         'deadlines': deadlines,
         'summary': summary,
+        'important_links': important_links if 'important_links' in locals() else [],
+        'attachments_mentioned': attachments_mentioned if 'attachments_mentioned' in locals() else [],
         'is_important': importance_level in ['VERY_IMPORTANT', 'IMPORTANT'],
         'has_deadline': has_deadline or len(deadlines) > 0,
         'processed_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
