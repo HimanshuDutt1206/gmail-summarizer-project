@@ -6,4 +6,4 @@ sqlalchemy==2.0.19
 flask==2.3.3
 python-dateutil==2.8.2
 requests==2.31.0
-google-generativeai==0.3.2 
+ollama==0.1.7 

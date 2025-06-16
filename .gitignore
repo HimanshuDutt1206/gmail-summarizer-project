@@ -4,6 +4,12 @@ credentials/credentials.json
 .env
 emails_data.json
 
+# Test files and temporary scripts
+test_*.py
+debug_*.py
+quick_test.py
+temp_*.py
+
 # Python cache files
 __pycache__/
 *.py[cod]
@@ -104,4 +110,15 @@ venv.bak/
 # mypy
 .mypy_cache/
 .dmypy.json
-dmypy.json 
+dmypy.json
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db 

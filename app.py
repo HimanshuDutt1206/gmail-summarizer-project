@@ -178,12 +178,12 @@ def process_emails():
         print("[DEBUG] Initializing LLM service...")
         llm_service = LLMService()
 
-        # Check if API key is available
-        use_llm = llm_service.api_key is not None
+        # Check if Ollama is available
+        use_llm = llm_service.is_available
         if use_llm:
-            print("[DEBUG] Using LLM-powered processing")
+            print("[DEBUG] Using Ollama-powered processing")
         else:
-            print("[DEBUG] API key not found, using simple processing")
+            print("[DEBUG] Ollama not available, using simple processing")
 
         print("[DEBUG] Authenticating with Gmail API...")
         gmail_client.authenticate()

@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-import google.generativeai as genai
+import ollama
 import re
 import time
 import json
@@ -11,57 +11,80 @@ load_dotenv()
 
 class LLMService:
     def __init__(self):
-        self.api_key = os.getenv('GEMINI_API_KEY')
-        if self.api_key:
-            genai.configure(api_key=self.api_key)
-            # Try different model names to find what works
-            model_names = ['gemini-1.5-flash',
-                           'gemini-pro', 'models/gemini-pro']
-            self.model = None
+        self.client = ollama.Client()
+        self.model_name = "mistral:7b"  # Default model
 
-            for model_name in model_names:
-                try:
-                    self.model = genai.GenerativeModel(model_name)
-                    # Test the model with a simple call
-                    test_response = self.model.generate_content("Hello")
-                    if test_response:
-                        print(
-                            f"[DEBUG] Successfully initialized Google Gemini with model: {model_name}")
-                        break
-                except Exception as e:
-                    print(f"[DEBUG] Model {model_name} failed: {str(e)[:100]}")
-                    continue
+        # Try to connect to Ollama and verify model availability
+        try:
+            models = self.client.list()
+            available_models = [model['name'] for model in models['models']]
+            print(f"[DEBUG] Available Ollama models: {available_models}")
 
-            if not self.model:
-                print("[DEBUG] All Gemini models failed, will use fallback methods")
-        else:
-            print("[DEBUG] No Gemini API key found, will use fallback methods")
-            self.model = None
+            if self.model_name in available_models:
+                print(
+                    f"[DEBUG] Successfully connected to Ollama with model: {self.model_name}")
+                # Test the model with a simple call
+                test_response = self.client.chat(model=self.model_name, messages=[
+                    {'role': 'user', 'content': 'Hello, respond with just "OK"'}
+                ])
+                if test_response:
+                    print("[DEBUG] Ollama model test successful")
+                    self.is_available = True
+                else:
+                    print("[DEBUG] Ollama model test failed")
+                    self.is_available = False
+            else:
+                print(
+                    f"[DEBUG] Model {self.model_name} not available. Available models: {available_models}")
+                if available_models:
+                    self.model_name = available_models[0]
+                    print(
+                        f"[DEBUG] Using first available model: {self.model_name}")
+                    self.is_available = True
+                else:
+                    print("[DEBUG] No models available in Ollama")
+                    self.is_available = False
 
-    def _call_gemini(self, prompt, max_retries=3):
-        """Make a call to Gemini API with retry logic."""
-        if not self.model:
+        except Exception as e:
+            print(f"[DEBUG] Failed to connect to Ollama: {e}")
+            self.is_available = False
+
+    def _call_ollama(self, prompt, max_retries=3):
+        """Make a call to Ollama with retry logic."""
+        if not self.is_available:
             return None
 
         for attempt in range(max_retries):
             try:
-                print(f"[DEBUG] Calling Gemini API (attempt {attempt + 1})")
-                response = self.model.generate_content(prompt)
+                print(f"[DEBUG] Calling Ollama API (attempt {attempt + 1})")
 
-                if response and response.text:
-                    result = response.text.strip()
-                    print(f"[DEBUG] Gemini response: {result[:100]}...")
+                response = self.client.chat(
+                    model=self.model_name,
+                    messages=[
+                        {'role': 'system', 'content': 'You are an email classifier. Always respond with valid JSON only. Choose exactly ONE importance level.'},
+                        {'role': 'user', 'content': prompt}
+                    ],
+                    options={
+                        'temperature': 0.05,  # Even lower temperature for consistency
+                        'top_p': 0.7,
+                        'num_predict': 600,  # Shorter responses
+                        'repeat_penalty': 1.2,
+                        # Stop at explanations
+                        'stop': ['\n\n', '```', 'Note:', 'Remember:'],
+                    }
+                )
+
+                if response and 'message' in response and 'content' in response['message']:
+                    result = response['message']['content'].strip()
+                    print(f"[DEBUG] Ollama response: {result[:100]}...")
                     return result
                 else:
-                    print("[DEBUG] Gemini returned empty response")
+                    print("[DEBUG] Ollama returned empty response")
                     return None
 
             except Exception as e:
-                print(f"[DEBUG] Gemini API error: {e}")
-                if "quota" in str(e).lower() or "limit" in str(e).lower():
-                    print("[DEBUG] Rate limited, waiting 10 seconds...")
-                    time.sleep(10)
-                elif attempt < max_retries - 1:
+                print(f"[DEBUG] Ollama API error: {e}")
+                if attempt < max_retries - 1:
                     time.sleep(2)
                     continue
                 else:
@@ -70,7 +93,7 @@ class LLMService:
         return None
 
     def analyze_email_comprehensive(self, subject, content, email_metadata=None):
-        """Comprehensive email analysis using Gemini for importance, categories, summary, and deadlines."""
+        """Comprehensive email analysis using Ollama for importance, categories, summary, and deadlines."""
         print(f"[DEBUG] Analyzing email comprehensively: {subject[:30]}...")
 
         # Clean content for better processing
@@ -84,76 +107,171 @@ class LLMService:
             if email_metadata.get('sender'):
                 metadata_info += f"\nSender: {email_metadata['sender']}"
 
-        prompt = f"""
-You are analyzing an email to help someone quickly understand what it's about while scanning their unread emails. The entire email content is provided below.
+        prompt = f"""You are an expert email classifier. Analyze this email and classify its importance level with STRICT accuracy.
 
-Email Subject: {subject}
-Email Content: {clean_content}{metadata_info}
+EMAIL TO ANALYZE:
+Subject: {subject}
+Content: {clean_content}{metadata_info}
 
-Create a clear, detailed summary that includes ALL important information while removing useless details. Respond in this exact JSON format:
+STRICT IMPORTANCE RULES:
+
+🔴 VERY_IMPORTANT (ONLY if BOTH conditions are met):
+1. Has a SPECIFIC DEADLINE (today, tomorrow, specific date/time)
+2. AND requires IMPORTANT ACTION that you must complete
+Examples:
+- "Meeting today at 2 PM" ✅
+- "Payment due tomorrow" ✅  
+- "Project submission deadline June 18" ✅
+- "Server down - fix immediately" ✅
+- "Security breach - action required now" ✅
+
+🟡 IMPORTANT (Information you will need later):
+- Work emails with useful information (no urgent deadline)
+- Meeting invitations for future dates (next week, next month)
+- Booking confirmations, travel details, flight tickets
+- Educational materials, course content
+- Bills/invoices (not due immediately)
+- Official communications from institutions
+- Reservation confirmations, hotel bookings
+Examples:
+- "Meeting next Monday" ✅
+- "Flight confirmation for next month" ✅
+- "Booking confirmation 6FEMTK" ✅
+- "Course materials shared" ✅
+- "Invoice - due in 30 days" ✅
+
+🟢 UNIMPORTANT (Can check at your own pace):
+- Newsletters, blogs, news updates
+- Social media notifications
+- Non-urgent personal emails
+- System notifications (non-critical)
+- Automated reports
+Examples:
+- "Weekly newsletter" ✅
+- "LinkedIn notification" ✅
+- "System backup completed" ✅
+
+🔴 SPAM (Wouldn't matter if you never saw it):
+- ALL marketing emails (even from known companies)
+- Promotional offers, sales, discounts
+- Unsolicited advertisements
+- Phishing attempts
+- Any email trying to sell you something
+Examples:
+- "50% off sale!" ✅
+- "New products available" ✅
+- "Limited time offer" ✅
+- "Do you play Pickleball? Check our gear" ✅
+- Any email from marketing@company.com ✅
+
+CRITICAL RULES:
+- Marketing emails = SPAM (even if from legitimate companies)
+- No deadline + no important action = NOT VERY_IMPORTANT
+- Promotional content = SPAM regardless of sender
+- Be VERY strict with VERY_IMPORTANT classification
+
+Respond ONLY with valid JSON:
 
 {{
     "importance_level": "VERY_IMPORTANT|IMPORTANT|UNIMPORTANT|SPAM",
-    "summary": "Clear, detailed summary that includes all critical information: dates, times, meeting IDs, reference numbers, phone numbers, deadlines. Remove all fluff, disclaimers, legal text, and technical details. Focus only on what the user needs to know and do.",
-    "deadlines": ["list of specific deadlines or dates found - include exact dates and times"],
+    "summary": "DETAILED summary including ALL specific information: exact dates, times, meeting IDs, phone numbers, confirmation numbers, flight details, deadlines. Be specific and include actionable details that the user needs to know.",
+    "deadlines": ["Extract SPECIFIC dates and times only - use actual dates, not 'today'"],
     "has_deadline": true/false,
-    "reasoning": "Brief explanation of importance level",
-    "important_links": ["ONLY include URLs that are directly actionable for the user - primary meeting join links, booking management links, direct download links. Skip: legal policies, contact pages, company logos, promotional links, help pages"],
-    "attachments_mentioned": ["ONLY include documents/files that the user needs to know about - actual attachments, referenced documents, materials to review. Skip: company logos, email signatures, promotional images"]
+    "reasoning": "Explain WHY you chose this level based on the STRICT rules above",
+    "important_links": ["Meeting join URLs, booking links, action URLs only"],
+    "attachments_mentioned": ["Important files mentioned"]
 }}
 
-Summary Guidelines:
-- Include ALL critical details but remove useless information
-- For meetings: Include date/time (or state if missing), meeting ID, passcode, dial-in number
-- For bookings: Include confirmation number, dates, key details
-- For deadlines: Include exact date/time and what needs to be done
-- For documents: Mention what documents are included/referenced
-- Skip: Legal disclaimers, privacy policies, unsubscribe links, company signatures, promotional text
-- Skip: Technical details like "this email is in HTML format"
-- Skip: Generic phrases like "please find attached" or "hope this email finds you well"
-- Focus on: What is this about? What do I need to do? When? How?
+SUMMARY REQUIREMENTS:
+- Include SPECIFIC dates and times (not "today" or "specified time")
+- Include meeting IDs, passcodes, phone numbers
+- Include confirmation numbers, flight numbers, booking details
+- Include exact deadlines and what needs to be done
+- Be detailed but concise (2-3 sentences max)
+- Focus on actionable information the user needs
 
-Link Selection Guidelines:
-- Only include links that are directly actionable or useful to the user
-- For meetings: include the main join link, skip legal/policy links
-- For bookings: include confirmation/management links, skip promotional links
-- For resources: include direct download/access links, skip company homepages
-- Skip: contact pages, legal policies, company logos, tracking URLs, promotional content
+Remember: Choose ONLY ONE importance level. Be EXTREMELY strict with classifications."""
 
-Importance Guidelines:
-- VERY_IMPORTANT: Urgent deadlines, critical business matters, emergencies
-- IMPORTANT: Work tasks, meetings, deadlines, bills, official communications, bookings
-- UNIMPORTANT: Newsletters, notifications, non-urgent personal emails
-- SPAM: Promotional emails, advertisements, suspicious content
-
-Extract all dates, deadlines, and time-sensitive information. Include important URLs and document references.
-"""
-
-        result = self._call_gemini(prompt)
+        result = self._call_ollama(prompt)
 
         if result:
             try:
-                # Try to parse JSON response
-                # Clean up the response in case it has extra text
-                json_start = result.find('{')
-                json_end = result.rfind('}') + 1
+                # Clean up the response to fix common JSON issues
+                cleaned_result = result.strip()
+
+                # Fix common escape sequence issues
+                cleaned_result = cleaned_result.replace('\\_', '_')
+                cleaned_result = cleaned_result.replace('\\n', ' ')
+
+                # Find JSON boundaries
+                json_start = cleaned_result.find('{')
+                json_end = cleaned_result.rfind('}') + 1
+
                 if json_start != -1 and json_end != 0:
-                    json_str = result[json_start:json_end]
+                    json_str = cleaned_result[json_start:json_end]
+
+                    # Additional cleanup for common issues
+                    json_str = json_str.replace('\n', ' ')  # Remove newlines
+                    # Normalize whitespace
+                    json_str = re.sub(r'\s+', ' ', json_str)
+
                     analysis = json.loads(json_str)
 
                     print(
-                        f"[DEBUG] Gemini analysis successful: {analysis['importance_level']}")
+                        f"[DEBUG] Ollama analysis successful: {analysis.get('importance_level', 'Unknown')}")
+                    print(
+                        f"[DEBUG] Reasoning: {analysis.get('reasoning', 'No reasoning provided')}")
+
+                    # Validate and fix importance level (ensure only one level)
+                    if 'importance_level' not in analysis:
+                        print("[DEBUG] Missing importance_level in response")
+                        return None
+
+                    # Fix multiple importance levels (take the first/highest priority)
+                    importance = analysis['importance_level']
+                    if '|' in importance:
+                        levels = importance.split('|')
+                        # Priority order: VERY_IMPORTANT > IMPORTANT > UNIMPORTANT > SPAM
+                        if 'VERY_IMPORTANT' in levels:
+                            analysis['importance_level'] = 'VERY_IMPORTANT'
+                        elif 'IMPORTANT' in levels:
+                            analysis['importance_level'] = 'IMPORTANT'
+                        elif 'UNIMPORTANT' in levels:
+                            analysis['importance_level'] = 'UNIMPORTANT'
+                        else:
+                            analysis['importance_level'] = 'SPAM'
+                        print(
+                            f"[DEBUG] Fixed multiple importance levels: {importance} → {analysis['importance_level']}")
+
                     return analysis
                 else:
-                    print("[DEBUG] Could not find JSON in Gemini response")
+                    print("[DEBUG] Could not find JSON in Ollama response")
+                    print(f"[DEBUG] Raw response: {result[:200]}...")
                     return None
 
             except json.JSONDecodeError as e:
-                print(f"[DEBUG] Failed to parse Gemini JSON response: {e}")
-                print(f"[DEBUG] Raw response: {result}")
+                print(f"[DEBUG] Failed to parse Ollama JSON response: {e}")
+                print(f"[DEBUG] Raw response: {result[:300]}...")
+
+                # Try to extract importance level manually as fallback
+                importance_match = re.search(
+                    r'"importance_level":\s*"([^"]+)"', result)
+                if importance_match:
+                    importance = importance_match.group(1)
+                    print(
+                        f"[DEBUG] Extracted importance level manually: {importance}")
+                    return {
+                        'importance_level': importance,
+                        'summary': 'Failed to parse full analysis',
+                        'deadlines': [],
+                        'has_deadline': False,
+                        'reasoning': 'JSON parsing failed',
+                        'important_links': [],
+                        'attachments_mentioned': []
+                    }
                 return None
         else:
-            print("[DEBUG] Gemini analysis failed")
+            print("[DEBUG] Ollama analysis failed")
             return None
 
     def categorize_email(self, subject, content):
@@ -184,7 +302,7 @@ Extract all dates, deadlines, and time-sensitive information. Include important 
 
         if analysis and 'deadlines' in analysis and analysis['deadlines']:
             deadlines = analysis['deadlines']
-            print(f"[DEBUG] Gemini deadlines: {deadlines}")
+            print(f"[DEBUG] Ollama deadlines: {deadlines}")
             return deadlines
         else:
             print("[DEBUG] Using fallback deadline extraction")
@@ -198,110 +316,157 @@ Extract all dates, deadlines, and time-sensitive information. Include important 
             return analysis['importance_level']
         else:
             # Fallback importance detection
-            text = f"{subject} {content}".lower()
-            if any(word in text for word in ['urgent', 'critical', 'emergency', 'asap', 'immediate']):
-                return 'VERY_IMPORTANT'
-            elif any(word in text for word in ['important', 'deadline', 'meeting', 'due', 'action required']):
-                return 'IMPORTANT'
-            elif any(word in text for word in ['sale', 'offer', 'marketing', 'unsubscribe', 'promotion']):
-                return 'SPAM'
-            else:
-                return 'UNIMPORTANT'
+            return self._simple_importance_fallback(subject, content)
 
     def _clean_email_content(self, content):
-        """Minimal cleaning - send entire email content to LLM."""
-        # Only basic whitespace cleanup - let LLM handle everything else
-        content = re.sub(r'\s+', ' ', content)
-        content = content.strip()
+        """Clean email content for better processing."""
+        if not content:
+            return ""
 
-        # Send entire content - no truncation, let LLM decide what's important
-        return content
+        # Remove CSS style blocks
+        content = re.sub(r'<style[^>]*>.*?</style>',
+                         '', content, flags=re.DOTALL | re.IGNORECASE)
+
+        # Remove inline CSS and style attributes
+        content = re.sub(
+            r'style\s*=\s*["\'][^"\']*["\']', '', content, flags=re.IGNORECASE)
+
+        # Remove CSS rules that might be in the content
+        content = re.sub(r'\{[^}]*\}', '', content)
+        content = re.sub(r'[a-zA-Z-]+\s*:\s*[^;]+;', '', content)
+
+        # Remove HTML tags
+        content = re.sub(r'<[^>]+>', ' ', content)
+
+        # Remove excessive whitespace
+        content = re.sub(r'\s+', ' ', content)
+
+        # Remove common email footers and unsubscribe links
+        content = re.sub(r'unsubscribe.*?$', '', content, flags=re.IGNORECASE)
+        content = re.sub(r'click here to view.*?$', '',
+                         content, flags=re.IGNORECASE)
+
+        # Remove CSS-related keywords that might leak through
+        css_keywords = ['padding', 'margin', 'font-family',
+                        'border', 'div', 'tbody', 'td', 'tr', 'table']
+        for keyword in css_keywords:
+            content = re.sub(
+                rf'\b{keyword}\b[^a-zA-Z]*', '', content, flags=re.IGNORECASE)
+
+        return content.strip()
 
     def _extract_deadlines_regex(self, subject, content):
-        """Extract deadlines using regex as fallback."""
-        text = f"{subject} {content}"
+        """Fallback regex-based deadline extraction."""
         deadlines = []
+        text = (subject + " " + content).lower()
 
-        # More comprehensive date patterns
-        date_patterns = [
-            # Specific dates
-            r'\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b',  # MM/DD/YYYY
-            # Month DD, YYYY
-            r'\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{2,4}\b',
-            # Mon DD, YYYY
-            r'\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+\d{2,4}\b',
-            # 18th June 2025
-            r'\b\d{1,2}(?:st|nd|rd|th)\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{2,4}\b',
-            # Relative dates with context
-            r'\b(?:due|deadline|by|before|until|submit by)\s+(?:tomorrow|today|tonight|this week|next week|end of week)\b',
-            # by 18th June
-            r'\b(?:due|deadline|by|before|until|submit by)\s+\d{1,2}(?:st|nd|rd|th)?\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\b',
-            # Standalone relative dates when in context of deadlines
-            r'\b(?:tomorrow|today|tonight|this week|next week|end of week)\b',
+        # Common deadline patterns
+        deadline_patterns = [
+            r'deadline.*?(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+            r'due.*?(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+            r'by.*?(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+            r'before.*?(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+            r'(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}).*?deadline',
+            r'submit.*?by.*?(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
         ]
 
-        for pattern in date_patterns:
-            matches = re.findall(pattern, text, re.IGNORECASE)
+        for pattern in deadline_patterns:
+            matches = re.findall(pattern, text)
             deadlines.extend(matches)
 
-        # Clean up and deduplicate
-        cleaned_deadlines = []
-        for deadline in deadlines:
-            deadline = deadline.strip()
-            if deadline and len(deadline) > 2:  # Filter out very short matches
-                cleaned_deadlines.append(deadline)
-
-        deadlines = list(set(cleaned_deadlines))[:5]
-        print(f"[DEBUG] Regex deadlines: {deadlines}")
-        return deadlines
+        return list(set(deadlines))  # Remove duplicates
 
     def _simple_categorize_fallback(self, subject, content):
-        """Fallback categorization when API fails."""
-        text = f"{subject} {content}".lower()
+        """Improved fallback categorization using strict keyword analysis."""
+        text = (subject + " " + content).lower()
+        print(f"[DEBUG] Using fallback categorization for: {subject[:50]}...")
 
-        # Simple importance-based categorization
-        if any(word in text for word in ['urgent', 'critical', 'emergency', 'asap', 'immediate', 'action required']):
-            return ['VERY_IMPORTANT']
-        elif any(word in text for word in ['important', 'deadline', 'meeting', 'due', 'project', 'work', 'business']):
+        # IMPORTANT indicators (check FIRST for legitimate business emails)
+        important_keywords = [
+            'booking confirmation', 'flight confirmation', 'reservation confirmed',
+            'ticket', 'itinerary', 'travel', 'hotel booking', 'car rental',
+            'meeting', 'appointment', 'conference', 'call',
+            'invoice', 'bill', 'payment', 'receipt',
+            'project', 'assignment', 'course', 'materials',
+            'document', 'report', 'proposal', 'visa', 'passport'
+        ]
+
+        # VERY_IMPORTANT indicators (deadline + important action)
+        very_urgent_keywords = [
+            'urgent', 'asap', 'emergency', 'critical', 'immediate',
+            'today', 'tonight', 'this morning', 'this afternoon',
+            'deadline today', 'due today', 'expires today',
+            'server down', 'system failure', 'security alert',
+            'action required immediately'
+        ]
+
+        # SPAM indicators (marketing/promotional) - Check AFTER important business emails
+        spam_keywords = [
+            # Marketing indicators (but exclude legitimate booking terms)
+            'sale', 'discount', 'offer', 'deal', 'promotion', 'promo',
+            'buy now', 'shop now', 'limited time offer', 'exclusive deal',
+            'free shipping', 'save money', 'best price',
+            # Sports/product marketing
+            'play', 'gear', 'equipment', 'new products', 'collection',
+            'new arrivals', 'trending', 'popular', 'bestseller',
+            # Suspicious/scam
+            'congratulations', 'winner', 'prize', 'lottery',
+            'click here now', 'act now', 'urgent offer',
+            'verify account', 'suspended account', 'inheritance'
+        ]
+
+        # UNIMPORTANT indicators (informational)
+        unimportant_keywords = [
+            'newsletter', 'blog', 'news', 'update', 'digest',
+            'notification', 'reminder', 'summary',
+            'linkedin', 'facebook', 'twitter', 'social',
+            'backup completed', 'maintenance'
+        ]
+
+        # Check for IMPORTANT first (legitimate business emails)
+        if any(keyword in text for keyword in important_keywords):
+            print(f"[DEBUG] Classified as IMPORTANT due to business keywords")
             return ['IMPORTANT']
-        elif any(word in text for word in ['sale', 'offer', 'discount', 'promo', 'marketing', 'unsubscribe', 'advertisement']):
+
+        # Check for VERY_IMPORTANT (urgent + deadline)
+        if any(keyword in text for keyword in very_urgent_keywords):
+            print(f"[DEBUG] Classified as VERY_IMPORTANT due to urgency keywords")
+            return ['VERY_IMPORTANT']
+
+        # Check for SPAM (marketing/promotional)
+        if any(keyword in text for keyword in spam_keywords):
+            print(f"[DEBUG] Classified as SPAM due to marketing/promotional keywords")
             return ['SPAM']
-        else:
+
+        # Check sender for marketing indicators
+        if any(word in text for word in ['marketing@', 'noreply@', 'no-reply@', 'promo@']):
+            print(f"[DEBUG] Classified as SPAM due to marketing sender")
+            return ['SPAM']
+
+        # Check for UNIMPORTANT (informational)
+        if any(keyword in text for keyword in unimportant_keywords):
+            print(f"[DEBUG] Classified as UNIMPORTANT due to informational keywords")
             return ['UNIMPORTANT']
 
+        # Default to UNIMPORTANT (be conservative)
+        print(f"[DEBUG] No keywords matched, defaulting to UNIMPORTANT")
+        return ['UNIMPORTANT']
+
     def _simple_summarize_fallback(self, content):
-        """Improved fallback summarization."""
-        sentences = re.split(r'[.!?]+', content)
-        sentences = [s.strip()
-                     for s in sentences if s.strip() and len(s.strip()) > 10]
+        """Simple fallback summarization."""
+        if not content:
+            return "No content available"
 
-        if not sentences:
-            return "Unable to generate summary from email content."
+        # Take first few sentences
+        sentences = content.split('.')[:3]
+        summary = '. '.join(sentences).strip()
 
-        if len(sentences) == 1:
-            summary = sentences[0]
-        elif len(sentences) == 2:
-            summary = f"{sentences[0]}. {sentences[1]}"
-        else:
-            # First + important middle + last sentence
-            first = sentences[0]
-            last = sentences[-1]
+        if len(summary) > 200:
+            summary = summary[:200] + "..."
 
-            important_keywords = ['important', 'urgent',
-                                  'need', 'require', 'please', 'action', 'deadline']
-            important_sentence = None
+        return summary or "Unable to generate summary"
 
-            for sentence in sentences[1:-1]:
-                if any(keyword in sentence.lower() for keyword in important_keywords):
-                    important_sentence = sentence
-                    break
-
-            if important_sentence:
-                summary = f"{first}. {important_sentence}. {last}"
-            else:
-                summary = f"{first}. {last}"
-
-        if len(summary) > 300:
-            summary = summary[:297] + "..."
-
-        return summary
+    def _simple_importance_fallback(self, subject, content):
+        """Improved fallback importance detection."""
+        categories = self._simple_categorize_fallback(subject, content)
+        return categories[0] if categories else 'IMPORTANT'

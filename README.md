@@ -1,176 +1,182 @@
-# Gmail Intelligent Processor 🤖📧
+# Gmail Intelligent Processor
 
-An AI-powered Gmail email processing application that automatically categorizes, summarizes, and extracts deadlines from your emails using Google Gemini AI.
+An AI-powered email management system that automatically categorizes, summarizes, and extracts important information from your Gmail inbox using **Ollama** for local LLM processing.
 
-## Features ✨
+## Features
 
-- **AI-Powered Classification**: Automatically categorizes emails into VERY_IMPORTANT, IMPORTANT, UNIMPORTANT, or SPAM
-- **Smart Summarization**: Generates concise 2-3 sentence summaries of email content
-- **Deadline Extraction**: Automatically identifies and extracts deadlines from emails
+- **Smart Email Analysis**: Uses Ollama (local LLM) to analyze emails for importance, content, and deadlines
+- **Importance-Based Categorization**: Automatically sorts emails into VERY_IMPORTANT, IMPORTANT, UNIMPORTANT, and SPAM
+- **Intelligent Summarization**: Generates concise summaries focusing on actionable information
+- **Deadline Detection**: Automatically extracts dates, deadlines, and time-sensitive information
 - **Real-time Filtering**: Filter emails by importance level and deadline presence
-- **Modern UI**: Clean, responsive interface with color-coded importance badges
-- **Gmail Integration**: Secure OAuth2 integration with Gmail API
+- **Privacy-First**: All LLM processing happens locally with Ollama - no data sent to external APIs
+- **Modern Web Interface**: Clean, responsive UI with real-time updates
 
-## Prerequisites 📋
+## Prerequisites
 
-Before setting up this project, ensure you have:
+1. **Python 3.7+**
+2. **Gmail API Credentials** (Google Cloud Console)
+3. **Ollama** installed and running locally
 
-1. **Python 3.7+** installed on your system
-2. **A Gmail account** that you want to process
-3. **Google Cloud Console access** for API setup
-4. **Google AI Studio account** for Gemini API (free tier available)
+## Setup Instructions
 
-## Setup Instructions 🚀
+### 1. Install Ollama
 
-### Step 1: Download and Extract Project
+First, install Ollama on your system:
 
-1. Download/clone this project to your local machine
-2. Navigate to the project directory in your terminal/command prompt
+- Visit [ollama.ai](https://ollama.ai) and download for your OS
+- Install and start Ollama
+- Pull a model (recommended: Mistral 7B):
+  ```bash
+  ollama pull mistral:7b
+  ```
 
-### Step 2: Install Dependencies
+### 2. Gmail API Setup
 
-```bash
-pip install -r requirements.txt
-```
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project or select existing one
+3. Enable the Gmail API
+4. Create credentials (OAuth 2.0 Client ID) for Desktop Application
+5. Download the credentials file as `credentials.json`
+6. Place it in the `credentials/` folder of this project
 
-### Step 3: Set Up Gmail API Access
+### 3. Project Setup
 
-1. **Go to Google Cloud Console**: https://console.cloud.google.com/
-2. **Create a new project** or select an existing one
-3. **Enable Gmail API**:
-   - Go to "APIs & Services" > "Library"
-   - Search for "Gmail API" and enable it
-4. **Create OAuth2 Credentials**:
-   - Go to "APIs & Services" > "Credentials"
-   - Click "Create Credentials" > "OAuth 2.0 Client IDs"
-   - Choose "Desktop application" as application type
-   - Name it (e.g., "Gmail Processor")
-   - Download the JSON file
-5. **Save credentials**:
-   - Rename the downloaded file to `credentials.json`
-   - Place it in the `credentials/` folder of this project
+1. Clone/download this project
+2. Install dependencies:
 
-### Step 4: Set Up Google Gemini API
-
-1. **Go to Google AI Studio**: https://aistudio.google.com/
-2. **Get API Key**:
-   - Click "Get API Key"
-   - Create a new API key or use existing one
-   - Copy the API key
-3. **Create environment file**:
-   - Create a file named `.env` in the project root directory
-   - Add your API key:
-   ```
-   GOOGLE_API_KEY=your_gemini_api_key_here
+   ```bash
+   pip install -r requirements.txt
    ```
 
-### Step 5: Run the Application
+3. Create the required directories:
+
+   ```bash
+   mkdir credentials config
+   ```
+
+4. Place your `credentials.json` in the `credentials/` folder
+
+5. **No API keys needed!** - Ollama runs locally
+
+### 4. Run the Application
 
 ```bash
 python app.py
 ```
 
-### Step 6: First-Time Gmail Authentication
+The application will:
 
-1. When you first run the app, it will open a browser window
-2. **Sign in to your Gmail account**
-3. **Grant permissions** to the application
-4. The app will save authentication tokens for future use
+- Start the local web server
+- Open your browser automatically
+- Connect to Ollama for LLM processing
+- Authenticate with Gmail (first time only)
 
-## Project Structure 📁
+## How It Works
+
+### Email Processing Pipeline
+
+1. **Fetch**: Retrieves unread emails from Gmail
+2. **Analyze**: Uses Ollama (local LLM) to analyze each email for:
+   - Importance level (VERY_IMPORTANT, IMPORTANT, UNIMPORTANT, SPAM)
+   - Content summary (actionable information only)
+   - Deadlines and dates
+   - Important links and attachments
+3. **Filter**: Provides real-time filtering by importance and deadlines
+4. **Display**: Shows results in a clean, modern interface
+
+### Ollama Integration
+
+- **Local Processing**: All AI analysis happens on your machine
+- **Privacy**: No email content sent to external services
+- **Customizable**: Easy to switch between different Ollama models
+- **Fast**: Direct local API calls without network latency
+
+## Usage
+
+1. **Process Emails**: Click "Analyze My Emails" to process unread emails
+2. **Filter Results**: Use dropdown filters to view specific importance levels
+3. **View Details**: Click on any email to see detailed analysis
+4. **Real-time Updates**: Interface updates automatically as emails are processed
+
+## Configuration
+
+### Changing Ollama Model
+
+Edit `src/llm_service.py` and change the model name:
+
+```python
+self.model_name = "mistral:7b"  # Change to your preferred model
+```
+
+Available models (pull with `ollama pull <model>`):
+
+- `mistral:7b` (recommended)
+- `llama2:7b`
+- `codellama:7b`
+- `neural-chat:7b`
+
+### Email Processing Limits
+
+Edit `app.py` to change the number of emails processed:
+
+```python
+MAX_EMAILS_TO_PROCESS = 50  # Adjust as needed
+```
+
+## File Structure
 
 ```
 mail-project/
 ├── app.py                 # Main Flask application
 ├── requirements.txt       # Python dependencies
 ├── README.md             # This file
-├── .env                  # Environment variables (create this)
-├── credentials/
-│   └── credentials.json  # Gmail API credentials (add this)
 ├── src/
-│   ├── llm_service.py    # Google Gemini integration
-│   └── gmail_client.py   # Gmail API client
-├── config/
-│   └── config.py         # Application configuration
-├── templates/
-│   └── index.html        # Web interface
-└── static/
-    ├── style.css         # Styling
-    └── script.js         # Frontend JavaScript
+│   ├── gmail_client.py   # Gmail API integration
+│   └── llm_service.py    # Ollama LLM service
+├── templates/            # HTML templates
+├── static/              # CSS, JS, images
+├── credentials/         # Gmail API credentials
+└── config/             # Configuration files
 ```
 
-## Usage 💡
+## Troubleshooting
 
-1. **Start the application**: Run `python app.py`
-2. **Open web browser**: Navigate to `http://127.0.0.1:5000`
-3. **Process emails**: Click "Process Emails" to analyze unread emails
-4. **Filter results**: Use the dropdown filters to view specific email categories
-5. **View details**: Click on any email to see full content and analysis
+### Ollama Issues
 
-## API Limits 📊
+- **"Ollama not available"**: Ensure Ollama is running (`ollama serve`)
+- **Model not found**: Pull the model first (`ollama pull mistral:7b`)
+- **Connection refused**: Check if Ollama is running on default port (11434)
 
-- **Google Gemini Free Tier**: 60 requests/minute, 1,500 requests/day
-- **Gmail API**: 1 billion quota units/day (more than sufficient for personal use)
+### Gmail API Issues
 
-## Troubleshooting 🔧
+- **Authentication failed**: Ensure `credentials.json` is in the `credentials/` folder
+- **Permission denied**: Check Gmail API is enabled in Google Cloud Console
+- **Token expired**: Delete `credentials/token.json` and re-authenticate
 
-### Common Issues:
+### General Issues
 
-1. **"No module named 'google'"**
+- **Import errors**: Run `pip install -r requirements.txt`
+- **Port in use**: Change the port in `app.py` if 5000 is occupied
 
-   - Run: `pip install -r requirements.txt`
+## Privacy & Security
 
-2. **"Invalid credentials"**
+- **Local Processing**: All email analysis happens locally with Ollama
+- **No External APIs**: No email content sent to third-party services
+- **Secure Storage**: Credentials stored locally, never transmitted
+- **Open Source**: Full transparency of data handling
 
-   - Ensure `credentials.json` is in the `credentials/` folder
-   - Check that Gmail API is enabled in Google Cloud Console
+## Contributing
 
-3. **"API key not found"**
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test thoroughly
+5. Submit a pull request
 
-   - Ensure `.env` file exists with `GOOGLE_API_KEY=your_key`
-   - Verify the API key is valid in Google AI Studio
+## License
 
-4. **"Permission denied" on first run**
-
-   - Complete the OAuth flow in the browser
-   - Grant all requested permissions
-
-5. **"Rate limit exceeded"**
-   - Wait a few minutes and try again
-   - The app has built-in retry logic for API limits
-
-### Debug Mode:
-
-The application runs in debug mode by default and provides detailed logging. Check the console output for specific error messages.
-
-## Security Notes 🔒
-
-- **Never share your `credentials.json` file** - it contains sensitive authentication data
-- **Never share your `.env` file** - it contains your API keys
-- **The `token.json` file** (created after first authentication) should also not be shared
-- All sensitive files are automatically excluded from this distribution
-
-## Customization 🎨
-
-You can customize the application by:
-
-- **Modifying categories**: Edit the importance levels in `src/llm_service.py`
-- **Changing UI colors**: Update CSS classes in `static/style.css`
-- **Adjusting AI prompts**: Modify the prompts in `src/llm_service.py`
-- **Adding new filters**: Extend the filtering logic in `static/script.js`
-
-## Support 💬
-
-If you encounter any issues:
-
-1. Check the troubleshooting section above
-2. Verify all setup steps were completed correctly
-3. Check the console output for detailed error messages
-4. Ensure your API keys and credentials are valid
-
-## License 📄
-
-This project is for educational and personal use. Please respect Gmail's Terms of Service and Google's API usage policies.
+This project is open source and available under the MIT License.
 
 ---
 

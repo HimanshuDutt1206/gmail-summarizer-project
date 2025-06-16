@@ -188,7 +188,7 @@ class GmailClient:
                     'snippet': message.get('snippet', ''),
                     'id': message['id']
                 }
-            except:
+            except Exception:
                 return None
 
     def mark_as_read(self, msg_id):

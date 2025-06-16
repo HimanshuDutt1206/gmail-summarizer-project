@@ -92,13 +92,13 @@ class EmailProcessor {
         item.addEventListener('click', () => this.showEmailDetail(email.id));
 
         const badges = [];
-        if (email.is_important) {
-            badges.push('<span class="email-badge badge-important"><i class="fas fa-exclamation-triangle"></i> Important</span>');
-        }
+        
+        // Show deadline badge if email has deadlines
         if (email.has_deadline) {
             badges.push('<span class="email-badge badge-deadline"><i class="fas fa-clock"></i> Deadline</span>');
         }
-        // Show importance level instead of categories
+        
+        // Show importance level badge (this replaces the old "Important" badge)
         if (email.importance_level) {
             const importanceColors = {
                 'VERY_IMPORTANT': 'badge-very-important',
@@ -167,7 +167,7 @@ class EmailProcessor {
                     return this.escapeHtml(deadline);
                 } else {
                     // Valid date, format it nicely
-                    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+                return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
                 }
               }).join(', ')
             : 'No deadlines found';
