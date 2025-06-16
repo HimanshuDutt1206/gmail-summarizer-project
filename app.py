@@ -121,6 +121,7 @@ def process_email_with_llm(email_data, llm_service):
     return {
         'id': email_data.get('id'),
         'subject': subject,
+        'sender': email_data.get('sender', 'Unknown Sender'),
         'importance_level': importance_level,
         'categories': [importance_level],  # For backward compatibility
         'deadlines': deadlines,
@@ -150,6 +151,7 @@ def process_email_simple(email_data):
     return {
         'id': email_data.get('id'),
         'subject': subject,
+        'sender': email_data.get('sender', 'Unknown Sender'),
         'categories': categories,
         'deadlines': [],  # Simplified for now
         'summary': summary,

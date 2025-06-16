@@ -112,6 +112,9 @@ class EmailProcessor {
 
         item.innerHTML = `
             <div class="email-subject">${this.escapeHtml(email.subject)}</div>
+            <div class="email-sender">
+                <i class="fas fa-user"></i> ${this.escapeHtml(email.sender || 'Unknown Sender')}
+            </div>
             <div class="email-meta">
                 ${badges.join('')}
                 <span class="email-date">
@@ -204,6 +207,17 @@ class EmailProcessor {
                 </div>
                 <div class="detail-value">
                     ${this.escapeHtml(email.subject)}
+                </div>
+            </div>
+
+            <div class="detail-section">
+                <div class="detail-label">
+                    <i class="fas fa-user"></i> From
+                </div>
+                <div class="detail-value">
+                    <div class="sender-info">
+                        ${this.escapeHtml(email.sender || 'Unknown Sender')}
+                    </div>
                 </div>
             </div>
 

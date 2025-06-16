@@ -1,8 +1,7 @@
 import os
 from dotenv import load_dotenv
-import ollama
+from groq import Groq
 import re
-import time
 import json
 
 # Load environment variables
@@ -11,90 +10,74 @@ load_dotenv()
 
 class LLMService:
     def __init__(self):
-        self.client = ollama.Client()
-        self.model_name = "mistral:7b"  # Default model
+        # Initialize Groq client
+        api_key = os.getenv('GROQ_API_KEY')
 
-        # Try to connect to Ollama and verify model availability
+        if not api_key:
+            print("[ERROR] GROQ_API_KEY not found in environment variables!")
+            print("[INFO] Please add your Groq API key to the .env file")
+            self.is_available = False
+            return
+
         try:
-            models = self.client.list()
-            available_models = [model['name'] for model in models['models']]
-            print(f"[DEBUG] Available Ollama models: {available_models}")
+            self.client = Groq(api_key=api_key)
+            # Use Llama 3 70B - best model for email analysis
+            self.model_name = "llama3-70b-8192"
 
-            if self.model_name in available_models:
+            # Test the connection
+            print("[DEBUG] Testing Groq connection...")
+            test_response = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[
+                    {"role": "user", "content": "Hello, respond with just 'OK'"}],
+                max_tokens=10,
+                temperature=0.1
+            )
+
+            if test_response.choices[0].message.content:
                 print(
-                    f"[DEBUG] Successfully connected to Ollama with model: {self.model_name}")
-                # Test the model with a simple call
-                test_response = self.client.chat(model=self.model_name, messages=[
-                    {'role': 'user', 'content': 'Hello, respond with just "OK"'}
-                ])
-                if test_response:
-                    print("[DEBUG] Ollama model test successful")
-                    self.is_available = True
-                else:
-                    print("[DEBUG] Ollama model test failed")
-                    self.is_available = False
+                    f"[DEBUG] ✅ Groq connected successfully with {self.model_name}")
+                self.is_available = True
             else:
-                print(
-                    f"[DEBUG] Model {self.model_name} not available. Available models: {available_models}")
-                if available_models:
-                    self.model_name = available_models[0]
-                    print(
-                        f"[DEBUG] Using first available model: {self.model_name}")
-                    self.is_available = True
-                else:
-                    print("[DEBUG] No models available in Ollama")
-                    self.is_available = False
+                print("[DEBUG] ❌ Groq test failed")
+                self.is_available = False
 
         except Exception as e:
-            print(f"[DEBUG] Failed to connect to Ollama: {e}")
+            print(f"[ERROR] Failed to connect to Groq: {e}")
+            print("[INFO] Check your API key and internet connection")
             self.is_available = False
 
-    def _call_ollama(self, prompt, max_retries=3):
-        """Make a call to Ollama with retry logic."""
+    def _call_groq(self, prompt, max_tokens=800, temperature=0.1):
+        """Make a call to Groq API with error handling."""
         if not self.is_available:
             return None
 
-        for attempt in range(max_retries):
-            try:
-                print(f"[DEBUG] Calling Ollama API (attempt {attempt + 1})")
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an expert email classifier. Always respond with valid JSON only. Be precise and consistent with classifications."
+                    },
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=0.9
+            )
 
-                response = self.client.chat(
-                    model=self.model_name,
-                    messages=[
-                        {'role': 'system', 'content': 'You are an email classifier. Always respond with valid JSON only. Choose exactly ONE importance level.'},
-                        {'role': 'user', 'content': prompt}
-                    ],
-                    options={
-                        'temperature': 0.05,  # Even lower temperature for consistency
-                        'top_p': 0.7,
-                        'num_predict': 600,  # Shorter responses
-                        'repeat_penalty': 1.2,
-                        # Stop at explanations
-                        'stop': ['\n\n', '```', 'Note:', 'Remember:'],
-                    }
-                )
+            result = response.choices[0].message.content.strip()
+            print(f"[DEBUG] Groq API call successful")
+            return result
 
-                if response and 'message' in response and 'content' in response['message']:
-                    result = response['message']['content'].strip()
-                    print(f"[DEBUG] Ollama response: {result[:100]}...")
-                    return result
-                else:
-                    print("[DEBUG] Ollama returned empty response")
-                    return None
-
-            except Exception as e:
-                print(f"[DEBUG] Ollama API error: {e}")
-                if attempt < max_retries - 1:
-                    time.sleep(2)
-                    continue
-                else:
-                    return None
-
-        return None
+        except Exception as e:
+            print(f"[ERROR] Groq API call failed: {e}")
+            return None
 
     def analyze_email_comprehensive(self, subject, content, email_metadata=None):
-        """Comprehensive email analysis using Ollama for importance, categories, summary, and deadlines."""
-        print(f"[DEBUG] Analyzing email comprehensively: {subject[:30]}...")
+        """Comprehensive email analysis using Groq Llama 3 70B."""
+        print(f"[DEBUG] Analyzing email with Groq: {subject[:50]}...")
 
         # Clean content for better processing
         clean_content = self._clean_email_content(content)
@@ -103,179 +86,98 @@ class LLMService:
         metadata_info = ""
         if email_metadata:
             if email_metadata.get('date_header'):
-                metadata_info += f"\nEmail Date Header: {email_metadata['date_header']}"
+                metadata_info += f"\nEmail Date: {email_metadata['date_header']}"
             if email_metadata.get('sender'):
                 metadata_info += f"\nSender: {email_metadata['sender']}"
 
-        prompt = f"""You are an expert email classifier. Analyze this email and classify its importance level with STRICT accuracy.
+        prompt = f"""Analyze this email and provide a comprehensive classification. Be extremely strict with importance levels.
 
 EMAIL TO ANALYZE:
 Subject: {subject}
 Content: {clean_content}{metadata_info}
 
-STRICT IMPORTANCE RULES:
+STRICT CLASSIFICATION RULES:
 
-🔴 VERY_IMPORTANT (ONLY if BOTH conditions are met):
-1. Has a SPECIFIC DEADLINE (today, tomorrow, specific date/time)
-2. AND requires IMPORTANT ACTION that you must complete
-Examples:
-- "Meeting today at 2 PM" ✅
-- "Payment due tomorrow" ✅  
-- "Project submission deadline June 18" ✅
-- "Server down - fix immediately" ✅
-- "Security breach - action required now" ✅
+🔴 VERY_IMPORTANT (Only if BOTH conditions are met):
+1. Has a SPECIFIC DEADLINE (today, tomorrow, exact date/time)
+2. AND requires CRITICAL ACTION from the recipient
+Examples: "Meeting today at 2PM", "Payment due tomorrow", "Server down - fix now"
 
-🟡 IMPORTANT (Information you will need later):
-- Work emails with useful information (no urgent deadline)
-- Meeting invitations for future dates (next week, next month)
-- Booking confirmations, travel details, flight tickets
-- Educational materials, course content
+🟡 IMPORTANT (Useful information you'll need later):
+- Meeting invitations (future dates)
+- Booking confirmations, travel details
+- Work assignments, course materials
 - Bills/invoices (not due immediately)
-- Official communications from institutions
-- Reservation confirmations, hotel bookings
-Examples:
-- "Meeting next Monday" ✅
-- "Flight confirmation for next month" ✅
-- "Booking confirmation 6FEMTK" ✅
-- "Course materials shared" ✅
-- "Invoice - due in 30 days" ✅
+- Official communications
+Examples: "Meeting next Monday", "Flight confirmation", "Invoice due in 30 days"
 
-🟢 UNIMPORTANT (Can check at your own pace):
-- Newsletters, blogs, news updates
+🟢 UNIMPORTANT (Informational, no action needed):
+- Newsletters, news updates
 - Social media notifications
-- Non-urgent personal emails
 - System notifications (non-critical)
-- Automated reports
-Examples:
-- "Weekly newsletter" ✅
-- "LinkedIn notification" ✅
-- "System backup completed" ✅
+- Personal casual emails
+Examples: "Weekly newsletter", "LinkedIn notification"
 
-🔴 SPAM (Wouldn't matter if you never saw it):
+🔴 SPAM (Marketing/promotional content):
 - ALL marketing emails (even from known companies)
-- Promotional offers, sales, discounts
+- Sales, promotions, discounts
 - Unsolicited advertisements
-- Phishing attempts
-- Any email trying to sell you something
-Examples:
-- "50% off sale!" ✅
-- "New products available" ✅
-- "Limited time offer" ✅
-- "Do you play Pickleball? Check our gear" ✅
-- Any email from marketing@company.com ✅
+Examples: "50% off sale", "New products available", "Limited offer"
 
-CRITICAL RULES:
-- Marketing emails = SPAM (even if from legitimate companies)
-- No deadline + no important action = NOT VERY_IMPORTANT
-- Promotional content = SPAM regardless of sender
-- Be VERY strict with VERY_IMPORTANT classification
-
-Respond ONLY with valid JSON:
-
+RESPONSE FORMAT - Return ONLY valid JSON:
 {{
     "importance_level": "VERY_IMPORTANT|IMPORTANT|UNIMPORTANT|SPAM",
-    "summary": "DETAILED summary including ALL specific information: exact dates, times, meeting IDs, phone numbers, confirmation numbers, flight details, deadlines. Be specific and include actionable details that the user needs to know.",
-    "deadlines": ["Extract SPECIFIC dates and times only - use actual dates, not 'today'"],
+    "summary": "Detailed summary with specific dates, times, numbers, IDs, and actionable information. Include exact details the user needs to know.",
+    "deadlines": ["Extract specific dates/times only - use actual dates"],
     "has_deadline": true/false,
-    "reasoning": "Explain WHY you chose this level based on the STRICT rules above",
-    "important_links": ["Meeting join URLs, booking links, action URLs only"],
-    "attachments_mentioned": ["Important files mentioned"]
+    "reasoning": "Brief explanation for the classification choice",
+    "important_links": ["Meeting URLs, booking links, action URLs only"],
+    "attachments_mentioned": ["Important files or documents mentioned in content"]
 }}
 
-SUMMARY REQUIREMENTS:
-- Include SPECIFIC dates and times (not "today" or "specified time")
-- Include meeting IDs, passcodes, phone numbers
-- Include confirmation numbers, flight numbers, booking details
-- Include exact deadlines and what needs to be done
-- Be detailed but concise (2-3 sentences max)
-- Focus on actionable information the user needs
+Be extremely precise with importance levels. Marketing emails are always SPAM regardless of sender."""
 
-Remember: Choose ONLY ONE importance level. Be EXTREMELY strict with classifications."""
-
-        result = self._call_ollama(prompt)
+        result = self._call_groq(prompt, max_tokens=1000, temperature=0.05)
 
         if result:
             try:
-                # Clean up the response to fix common JSON issues
+                # Clean up response and extract JSON
                 cleaned_result = result.strip()
-
-                # Fix common escape sequence issues
-                cleaned_result = cleaned_result.replace('\\_', '_')
-                cleaned_result = cleaned_result.replace('\\n', ' ')
 
                 # Find JSON boundaries
                 json_start = cleaned_result.find('{')
                 json_end = cleaned_result.rfind('}') + 1
 
-                if json_start != -1 and json_end != 0:
+                if json_start != -1 and json_end > json_start:
                     json_str = cleaned_result[json_start:json_end]
-
-                    # Additional cleanup for common issues
-                    json_str = json_str.replace('\n', ' ')  # Remove newlines
-                    # Normalize whitespace
-                    json_str = re.sub(r'\s+', ' ', json_str)
-
                     analysis = json.loads(json_str)
 
-                    print(
-                        f"[DEBUG] Ollama analysis successful: {analysis.get('importance_level', 'Unknown')}")
-                    print(
-                        f"[DEBUG] Reasoning: {analysis.get('reasoning', 'No reasoning provided')}")
-
-                    # Validate and fix importance level (ensure only one level)
-                    if 'importance_level' not in analysis:
-                        print("[DEBUG] Missing importance_level in response")
-                        return None
-
-                    # Fix multiple importance levels (take the first/highest priority)
-                    importance = analysis['importance_level']
-                    if '|' in importance:
-                        levels = importance.split('|')
-                        # Priority order: VERY_IMPORTANT > IMPORTANT > UNIMPORTANT > SPAM
-                        if 'VERY_IMPORTANT' in levels:
-                            analysis['importance_level'] = 'VERY_IMPORTANT'
-                        elif 'IMPORTANT' in levels:
-                            analysis['importance_level'] = 'IMPORTANT'
-                        elif 'UNIMPORTANT' in levels:
-                            analysis['importance_level'] = 'UNIMPORTANT'
-                        else:
-                            analysis['importance_level'] = 'SPAM'
+                    # Validate required fields
+                    required_fields = ['importance_level',
+                                       'summary', 'deadlines', 'has_deadline']
+                    if all(field in analysis for field in required_fields):
                         print(
-                            f"[DEBUG] Fixed multiple importance levels: {importance} → {analysis['importance_level']}")
-
-                    return analysis
+                            f"[DEBUG] ✅ Analysis successful: {analysis['importance_level']}")
+                        print(
+                            f"[DEBUG] Summary: {analysis['summary'][:100]}...")
+                        return analysis
+                    else:
+                        print("[DEBUG] ❌ Missing required fields in response")
+                        return None
                 else:
-                    print("[DEBUG] Could not find JSON in Ollama response")
-                    print(f"[DEBUG] Raw response: {result[:200]}...")
+                    print("[DEBUG] ❌ No valid JSON found in response")
                     return None
 
             except json.JSONDecodeError as e:
-                print(f"[DEBUG] Failed to parse Ollama JSON response: {e}")
-                print(f"[DEBUG] Raw response: {result[:300]}...")
-
-                # Try to extract importance level manually as fallback
-                importance_match = re.search(
-                    r'"importance_level":\s*"([^"]+)"', result)
-                if importance_match:
-                    importance = importance_match.group(1)
-                    print(
-                        f"[DEBUG] Extracted importance level manually: {importance}")
-                    return {
-                        'importance_level': importance,
-                        'summary': 'Failed to parse full analysis',
-                        'deadlines': [],
-                        'has_deadline': False,
-                        'reasoning': 'JSON parsing failed',
-                        'important_links': [],
-                        'attachments_mentioned': []
-                    }
+                print(f"[DEBUG] ❌ JSON parsing failed: {e}")
+                print(f"[DEBUG] Raw response: {result[:200]}...")
                 return None
-        else:
-            print("[DEBUG] Ollama analysis failed")
-            return None
+
+        print("[DEBUG] ❌ Groq analysis failed")
+        return None
 
     def categorize_email(self, subject, content):
-        """Categorize email - now uses comprehensive analysis."""
+        """Categorize email using comprehensive analysis."""
         analysis = self.analyze_email_comprehensive(subject, content)
 
         if analysis and 'importance_level' in analysis:
@@ -285,9 +187,7 @@ Remember: Choose ONLY ONE importance level. Be EXTREMELY strict with classificat
             return self._simple_categorize_fallback(subject, content)
 
     def summarize_email(self, content):
-        """Summarize email - now uses comprehensive analysis."""
-        # For backward compatibility, we might be called directly
-        # In that case, try to get the subject from the app flow
+        """Summarize email using comprehensive analysis."""
         analysis = self.analyze_email_comprehensive("", content)
 
         if analysis and 'summary' in analysis:
@@ -297,12 +197,12 @@ Remember: Choose ONLY ONE importance level. Be EXTREMELY strict with classificat
             return self._simple_summarize_fallback(content)
 
     def extract_deadlines(self, subject, content):
-        """Extract deadlines - now uses comprehensive analysis."""
+        """Extract deadlines using comprehensive analysis."""
         analysis = self.analyze_email_comprehensive(subject, content)
 
         if analysis and 'deadlines' in analysis and analysis['deadlines']:
             deadlines = analysis['deadlines']
-            print(f"[DEBUG] Ollama deadlines: {deadlines}")
+            print(f"[DEBUG] Groq deadlines: {deadlines}")
             return deadlines
         else:
             print("[DEBUG] Using fallback deadline extraction")
@@ -315,7 +215,6 @@ Remember: Choose ONLY ONE importance level. Be EXTREMELY strict with classificat
         if analysis and 'importance_level' in analysis:
             return analysis['importance_level']
         else:
-            # Fallback importance detection
             return self._simple_importance_fallback(subject, content)
 
     def _clean_email_content(self, content):
@@ -323,35 +222,24 @@ Remember: Choose ONLY ONE importance level. Be EXTREMELY strict with classificat
         if not content:
             return ""
 
-        # Remove CSS style blocks
-        content = re.sub(r'<style[^>]*>.*?</style>',
-                         '', content, flags=re.DOTALL | re.IGNORECASE)
-
-        # Remove inline CSS and style attributes
-        content = re.sub(
-            r'style\s*=\s*["\'][^"\']*["\']', '', content, flags=re.IGNORECASE)
-
-        # Remove CSS rules that might be in the content
-        content = re.sub(r'\{[^}]*\}', '', content)
-        content = re.sub(r'[a-zA-Z-]+\s*:\s*[^;]+;', '', content)
-
         # Remove HTML tags
         content = re.sub(r'<[^>]+>', ' ', content)
+
+        # Remove CSS style blocks and inline styles
+        content = re.sub(r'<style[^>]*>.*?</style>',
+                         '', content, flags=re.DOTALL | re.IGNORECASE)
+        content = re.sub(
+            r'style\s*=\s*["\'][^"\']*["\']', '', content, flags=re.IGNORECASE)
 
         # Remove excessive whitespace
         content = re.sub(r'\s+', ' ', content)
 
-        # Remove common email footers and unsubscribe links
+        # Remove common email footers
         content = re.sub(r'unsubscribe.*?$', '', content, flags=re.IGNORECASE)
-        content = re.sub(r'click here to view.*?$', '',
-                         content, flags=re.IGNORECASE)
 
-        # Remove CSS-related keywords that might leak through
-        css_keywords = ['padding', 'margin', 'font-family',
-                        'border', 'div', 'tbody', 'td', 'tr', 'table']
-        for keyword in css_keywords:
-            content = re.sub(
-                rf'\b{keyword}\b[^a-zA-Z]*', '', content, flags=re.IGNORECASE)
+        # Limit length to avoid token limits
+        if len(content) > 3000:
+            content = content[:3000] + "..."
 
         return content.strip()
 
@@ -360,96 +248,41 @@ Remember: Choose ONLY ONE importance level. Be EXTREMELY strict with classificat
         deadlines = []
         text = (subject + " " + content).lower()
 
-        # Common deadline patterns
         deadline_patterns = [
             r'deadline.*?(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
             r'due.*?(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
             r'by.*?(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
             r'before.*?(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
-            r'(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}).*?deadline',
-            r'submit.*?by.*?(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
         ]
 
         for pattern in deadline_patterns:
             matches = re.findall(pattern, text)
             deadlines.extend(matches)
 
-        return list(set(deadlines))  # Remove duplicates
+        return list(set(deadlines))
 
     def _simple_categorize_fallback(self, subject, content):
-        """Improved fallback categorization using strict keyword analysis."""
+        """Fallback categorization when Groq is unavailable."""
         text = (subject + " " + content).lower()
-        print(f"[DEBUG] Using fallback categorization for: {subject[:50]}...")
 
-        # IMPORTANT indicators (check FIRST for legitimate business emails)
-        important_keywords = [
-            'booking confirmation', 'flight confirmation', 'reservation confirmed',
-            'ticket', 'itinerary', 'travel', 'hotel booking', 'car rental',
-            'meeting', 'appointment', 'conference', 'call',
-            'invoice', 'bill', 'payment', 'receipt',
-            'project', 'assignment', 'course', 'materials',
-            'document', 'report', 'proposal', 'visa', 'passport'
-        ]
+        # Check for spam/marketing first
+        spam_keywords = ['sale', 'discount', 'offer',
+                         'deal', 'promotion', 'buy now', 'limited time']
+        if any(keyword in text for keyword in spam_keywords):
+            return ['SPAM']
 
-        # VERY_IMPORTANT indicators (deadline + important action)
-        very_urgent_keywords = [
-            'urgent', 'asap', 'emergency', 'critical', 'immediate',
-            'today', 'tonight', 'this morning', 'this afternoon',
-            'deadline today', 'due today', 'expires today',
-            'server down', 'system failure', 'security alert',
-            'action required immediately'
-        ]
-
-        # SPAM indicators (marketing/promotional) - Check AFTER important business emails
-        spam_keywords = [
-            # Marketing indicators (but exclude legitimate booking terms)
-            'sale', 'discount', 'offer', 'deal', 'promotion', 'promo',
-            'buy now', 'shop now', 'limited time offer', 'exclusive deal',
-            'free shipping', 'save money', 'best price',
-            # Sports/product marketing
-            'play', 'gear', 'equipment', 'new products', 'collection',
-            'new arrivals', 'trending', 'popular', 'bestseller',
-            # Suspicious/scam
-            'congratulations', 'winner', 'prize', 'lottery',
-            'click here now', 'act now', 'urgent offer',
-            'verify account', 'suspended account', 'inheritance'
-        ]
-
-        # UNIMPORTANT indicators (informational)
-        unimportant_keywords = [
-            'newsletter', 'blog', 'news', 'update', 'digest',
-            'notification', 'reminder', 'summary',
-            'linkedin', 'facebook', 'twitter', 'social',
-            'backup completed', 'maintenance'
-        ]
-
-        # Check for IMPORTANT first (legitimate business emails)
+        # Check for important business emails
+        important_keywords = ['meeting', 'deadline',
+                              'urgent', 'important', 'action required']
         if any(keyword in text for keyword in important_keywords):
-            print(f"[DEBUG] Classified as IMPORTANT due to business keywords")
             return ['IMPORTANT']
 
-        # Check for VERY_IMPORTANT (urgent + deadline)
-        if any(keyword in text for keyword in very_urgent_keywords):
-            print(f"[DEBUG] Classified as VERY_IMPORTANT due to urgency keywords")
+        # Check for very urgent
+        urgent_keywords = ['today', 'asap',
+                           'immediately', 'critical', 'emergency']
+        if any(keyword in text for keyword in urgent_keywords):
             return ['VERY_IMPORTANT']
 
-        # Check for SPAM (marketing/promotional)
-        if any(keyword in text for keyword in spam_keywords):
-            print(f"[DEBUG] Classified as SPAM due to marketing/promotional keywords")
-            return ['SPAM']
-
-        # Check sender for marketing indicators
-        if any(word in text for word in ['marketing@', 'noreply@', 'no-reply@', 'promo@']):
-            print(f"[DEBUG] Classified as SPAM due to marketing sender")
-            return ['SPAM']
-
-        # Check for UNIMPORTANT (informational)
-        if any(keyword in text for keyword in unimportant_keywords):
-            print(f"[DEBUG] Classified as UNIMPORTANT due to informational keywords")
-            return ['UNIMPORTANT']
-
-        # Default to UNIMPORTANT (be conservative)
-        print(f"[DEBUG] No keywords matched, defaulting to UNIMPORTANT")
         return ['UNIMPORTANT']
 
     def _simple_summarize_fallback(self, content):
@@ -457,8 +290,7 @@ Remember: Choose ONLY ONE importance level. Be EXTREMELY strict with classificat
         if not content:
             return "No content available"
 
-        # Take first few sentences
-        sentences = content.split('.')[:3]
+        sentences = content.split('.')[:2]
         summary = '. '.join(sentences).strip()
 
         if len(summary) > 200:
@@ -467,6 +299,6 @@ Remember: Choose ONLY ONE importance level. Be EXTREMELY strict with classificat
         return summary or "Unable to generate summary"
 
     def _simple_importance_fallback(self, subject, content):
-        """Improved fallback importance detection."""
+        """Fallback importance detection."""
         categories = self._simple_categorize_fallback(subject, content)
-        return categories[0] if categories else 'IMPORTANT'
+        return categories[0] if categories else 'UNIMPORTANT'
